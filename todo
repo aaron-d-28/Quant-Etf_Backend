@@ -1,0 +1,10 @@
+note here now to create monthly risk
+ if yes we run a scrip that converts the latest months risk factors calculation and insert a row
+ then we send it to our machine learning model trained on all months data
+ we predict which etf seems goated then we predict based on that
+ then we serve this info
+ now what we need to do is check whether the data is valid or not ie back testing
+ we then create a situation if we were to invest then how itd behave and store that  in our user table
+
+ a user invests is some stock current stock ohlsv prices and when we purchased is recorded
+ we just need a way to know how well it happens create some error function to record that
