@@ -1,9 +1,10 @@
 import pandas as pd
 from tensorflow import keras
 import pickle as pkl
-
-modelpath = "./Riskmodel_Dense.keras"
-encoderpath ="../../MainApp/app/models/artifacts/encoder.pkl"
+import os
+BASE_DIR = os.path.dirname(__file__)
+modelpath = os.path.join(BASE_DIR, "Riskmodel_dense.keras")
+encoderpath = os.path.join(BASE_DIR, "encoder.pkl")
 model = keras.models.load_model(modelpath)
 encoder =pkl.load(open(encoderpath, "rb"))
 
@@ -20,6 +21,7 @@ def preprocess(df: pd.DataFrame,ticker_column='ticker'):
     return df
 
 def predict(df: pd.DataFrame):
+    df = preprocess(df)
     predictions = model.predict(df)
     return predictions
 

@@ -4,10 +4,15 @@ from datetime import datetime
 
 from confluent_kafka import Consumer
 from sqlalchemy.orm import Session
+
+from app.db.models.risk_monthly import RiskMonthly
 from app.db.session import SessionLocal
 from app.db.models.ohlcv import OHLCV
 from app.core.config import settings
+from app.models.artifacts.ML_model import predict
+from app.services.Kafka.Prediction import SendPredictionUsingKafka
 from app.services.risk_service import last_monthly_risk
+from app.services.risk_transformer import fetch_monthly_risk
 
 from app.services.tasks import process_ohlcv_for_risk, process_monthly_ohlcv_for_risk
 
@@ -31,8 +36,9 @@ def insert_ohlcv_to_db(data: dict):
 
         db.add(rec)
         db.commit()
-        print(f"Inserted {rec}")
-        process_ohlcv_for_risk(data["ticker"])
+        DailyRiskData=process_ohlcv_for_risk(data["ticker"])
+
+        print(f"Inserted OHLV:{dict(rec)} and DailyRisk {DailyRiskData}")
         dt = datetime.strptime(data["date"], "%Y-%m-%d")
         if dt.day==1:
             if dt.month == 1:
@@ -42,9 +48,23 @@ def insert_ohlcv_to_db(data: dict):
                 prev_month = dt.month - 1
                 prev_year = dt.year
             prev_month_str = f"{prev_year}-{prev_month:02d}"  # e.g., "2025-11"
-            process_monthly_ohlcv_for_risk(prev_month_str)
-            last_monthly_risk(db,dt)
+            RiskMonthData=process_monthly_ohlcv_for_risk(prev_month_str)
+            print(f"Inserted Monthly Risk data {RiskMonthData}")
+            if last_monthly_risk(db,dt):
+                CurrentMonthPred:RiskMonthly = fetch_monthly_risk(db,str(dt.year),dt.month)
 
+                Predictions =predict(CurrentMonthPred).flatten().tolist()
+                all_data_to_send = []
+
+                for current, pred in zip(CurrentMonthPred, Predictions):
+                    all_data_to_send.append({
+                        "month": current.month,
+                        "year": current.year,
+                        "prediction": float(pred[0]),  # convert numpy float32 -> native float
+                        "Ticker": current.ticker,
+                    })
+
+                SendPredictionUsingKafka(Predictions)
 
 
     except Exception as e:

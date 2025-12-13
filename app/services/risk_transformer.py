@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -155,16 +156,43 @@ def compute_risk_for_latest(df: pd.DataFrame):
     }
 
 def fetch_monthly_risk(db: Session,month:str,year:int):
-    rows =(
+    rows:list[RiskMonthly] =(
         db.query(RiskMonthly)
         .filter(RiskMonthly.month == month)
         .filter(RiskMonthly.year == year)
         .all()
     )
-    data =[]
-    for r in rows:
-        d = r.__dict__.copy()
-        d.pop('_sa_instance_state', None)
+    data:List[dict] = [
+        {
+            "ticker": r.ticker,
+            "month": r.month,
+            "year": r.year,
+            "risk_score": r.risk_score,
+            "rank": r.rank,
+
+            "monthly_return": r.monthly_return,
+            "monthly_volatility": r.monthly_volatility,
+            "downside_vol_monthly": r.downside_vol_monthly,
+            "var_95_monthly": r.var_95_monthly,
+            "cvar_95_monthly": r.cvar_95_monthly,
+            "max_drawdown_monthly": r.max_drawdown_monthly,
+            "sharpe_monthly": r.sharpe_monthly,
+
+            "return_p": r.return_p,
+            "sharpe_p": r.sharpe_p,
+            "vol_p": r.vol_p,
+            "downside_p": r.downside_p,
+            "var_p": r.var_p,
+            "cvar_p": r.cvar_p,
+            "dd_p": r.dd_p,
+
+            "date": r.date,
+            "month_sin": r.month_sin,
+            "month_cos": r.month_cos,
+        }
+        for r in rows
+    ]
+
     df = pd.DataFrame(data)
     return df
 

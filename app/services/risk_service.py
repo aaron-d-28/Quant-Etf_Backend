@@ -16,6 +16,8 @@ def last_monthly_risk(db:Session,date: datetime):
     data = fetch_monthly_risk(db, str(prev_month), prev_year)
     try:
         train_model(data)
+        print("Trained model!!!!!!!!")
     except Exception as e:
         print(f"Error while training the model :{e}")
-    return data
+        return "Error while training the model :",e
+    return True

@@ -12,6 +12,7 @@ from app.services.risk_transformer import fetch_recent_ohlcv, compute_risk_for_l
 def process_ohlcv_for_risk(ticker: str):
     """Main task triggered after Kafka receives a new OHLCV row."""
 
+    global DailyRiskData
     db: Session = SessionLocal()
 
     try:
@@ -25,7 +26,7 @@ def process_ohlcv_for_risk(ticker: str):
             print("Risk computation returned None.")
             return False
 
-        rec = RiskFactor(
+        DailyRiskData = RiskFactor(
             date=risk["date"],
             ticker=ticker,
             adj_close=risk.get("adj_close"),        # optional
@@ -39,7 +40,7 @@ def process_ohlcv_for_risk(ticker: str):
         )
 
 
-        db.add(rec)
+        db.add(DailyRiskData)
         db.commit()
         return True
 
@@ -50,13 +51,12 @@ def process_ohlcv_for_risk(ticker: str):
 
     finally:
         db.close()
+        return DailyRiskData
 
-
-def retrainmodel():
-    pass
 
 
 def process_monthly_ohlcv_for_risk(month_str:str):
+    global RiskMonthData
     db: Session = SessionLocal()
     try:
         df = fetch_risk(db, month_str)
@@ -75,7 +75,7 @@ def process_monthly_ohlcv_for_risk(month_str:str):
         records = []
 
         for _, row in df.iterrows():
-            rec = RiskMonthly(
+            RiskMonthData = RiskMonthly(
                 ticker=row['ticker'],
                 month=row['month'],
                 monthly_return=row['monthly_return'],
@@ -100,7 +100,7 @@ def process_monthly_ohlcv_for_risk(month_str:str):
                 month_cos      = row['month_cos']
 
             )
-            records.append(rec)
+            records.append(RiskMonthData)
             db.add_all(records)
             db.commit()
     except Exception as e:
@@ -109,3 +109,4 @@ def process_monthly_ohlcv_for_risk(month_str:str):
         return False
     finally:
         db.close()
+        return RiskMonthData
