@@ -1,7 +1,10 @@
 import json
+import os
 import threading
 from datetime import datetime
+from typing import Union
 
+import pandas as pd
 from confluent_kafka import Consumer
 from sqlalchemy.orm import Session
 
@@ -10,68 +13,55 @@ from app.db.session import SessionLocal
 from app.db.models.ohlcv import OHLCV
 from app.core.config import settings
 from app.models.artifacts.ML_model import predict
-from app.services.Kafka.Prediction import SendPredictionUsingKafka
+from app.services.Anomaly.AnomalyDetection import weekly_train, daily_predict, FEATURE_COLS
+from app.services.Anomaly.AnomalyKafka import SendAnomalyUsingKafka
+from app.services.Helpers import insert_ohlcv, compute_daily_risk, maybe_retrain_anomaly_model, prepare_daily_features, \
+    detect_daily_anomalies, process_monthly_risk, run_monthly_prediction, dispatch_kafka
+from app.services.Kafka.PredictionKafka import SendPredictionUsingKafka
 from app.services.risk_service import last_monthly_risk
 from app.services.risk_transformer import fetch_monthly_risk
 
-from app.services.tasks import process_ohlcv_for_risk, process_monthly_ohlcv_for_risk
+from app.services.tasks import process_ohlcv_for_risk, process_monthly_ohlcv_for_risk, insert_anomalies, \
+    insert_monthly_predictions
 
 consumer_running = False
 consumer = None
 
 
+
 def insert_ohlcv_to_db(data: dict):
     db: Session = SessionLocal()
+
     try:
-        rec = OHLCV(
-            date=data["date"],
-            ticker=data["ticker"],
-            open=float(data["open"]),
-            high=float(data["high"]),
-            low=float(data["low"]),
-            close=float(data["close"]),
-            volume=float(data["volume"]),
-            adj_close=float(data["adj_close"]),
-        )
+        if not insert_ohlcv(db, data):
+            return
 
-        db.add(rec)
-        db.commit()
-        DailyRiskData=process_ohlcv_for_risk(data["ticker"])
+        daily_risk_df = compute_daily_risk(db, data["ticker"])
+        if daily_risk_df is None:
+            return
 
-        print(f"Inserted OHLV:{dict(rec)} and DailyRisk {DailyRiskData}")
-        dt = datetime.strptime(data["date"], "%Y-%m-%d")
-        if dt.day==1:
-            if dt.month == 1:
-                prev_month = 12
-                prev_year = dt.year - 1
-            else:
-                prev_month = dt.month - 1
-                prev_year = dt.year
-            prev_month_str = f"{prev_year}-{prev_month:02d}"  # e.g., "2025-11"
-            RiskMonthData=process_monthly_ohlcv_for_risk(prev_month_str)
-            print(f"Inserted Monthly Risk data {RiskMonthData}")
-            if last_monthly_risk(db,dt):
-                CurrentMonthPred:RiskMonthly = fetch_monthly_risk(db,str(dt.year),dt.month)
+        dt = maybe_retrain_anomaly_model(db, data["date"])
 
-                Predictions =predict(CurrentMonthPred).flatten().tolist()
-                all_data_to_send = []
+        clean_df = prepare_daily_features(daily_risk_df, FEATURE_COLS)
+        anomalies = detect_daily_anomalies(clean_df) if clean_df is not None else None
 
-                for current, pred in zip(CurrentMonthPred, Predictions):
-                    all_data_to_send.append({
-                        "month": current.month,
-                        "year": current.year,
-                        "prediction": float(pred[0]),  # convert numpy float32 -> native float
-                        "Ticker": current.ticker,
-                    })
+        process_monthly_risk(db, dt)
+        predictions = run_monthly_prediction(db, dt)
 
-                SendPredictionUsingKafka(Predictions)
 
+        dispatch_kafka(predictions, anomalies)
+
+        #note made changes here so take care test this
+        inserted = insert_anomalies(db, anomalies)
+        inserted = insert_monthly_predictions(db, predictions)
 
     except Exception as e:
-        print(f"DB insert error:Dataframe not Proper it is{data}", e)
+        print(f"Pipeline fatal error: {e}")
         db.rollback()
+
     finally:
         db.close()
+
 
 
 def kafka_loop():

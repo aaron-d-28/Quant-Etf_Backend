@@ -1,8 +1,8 @@
 
-Anomaly Detection
 
 create endpoints for showing stocks risk and monthy risk history
 create endpoints to nvest in stock
+
 then create ability to invest in it
 create an endpoint to see user portfolio for how much up or down and our current stock price is
 

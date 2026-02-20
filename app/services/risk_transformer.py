@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import List
+from typing import List, Union
 
 import numpy as np
 import pandas as pd
+from fastapi import Depends
 from sqlalchemy.orm import Session
 from app.db.models.ohlcv import OHLCV
 from app.db.models.risk_monthly import RiskMonthly
@@ -14,7 +15,7 @@ WINDOW = 60  # last 60 rows for rolling risk calculations
 # -----------------------------------------------------
 # FETCH LAST 60 ROWS FOR THAT TICKER
 # -----------------------------------------------------
-def fetch_recent_ohlcv(db: Session, ticker: str):
+def fetch_recent_ohlcv( ticker: str,db: Session ):
     rows = (
         db.query(OHLCV)
         .filter(OHLCV.ticker == ticker)
@@ -31,7 +32,7 @@ def fetch_recent_ohlcv(db: Session, ticker: str):
         "ticker": r.ticker,
         "Adj Close": r.adj_close
     } for r in rows])
-
+    db.close()
     return df.sort_values("Date").reset_index(drop=True)
 
 
@@ -155,19 +156,31 @@ def compute_risk_for_latest(df: pd.DataFrame):
 
     }
 
-def fetch_monthly_risk(db: Session,month:str,year:int):
-    rows:list[RiskMonthly] =(
+
+def fetch_monthly_risk(
+        db: Session,
+        year: int,
+        month: str,
+        as_df: bool = False
+) -> Union[List[RiskMonthly], pd.DataFrame]:
+
+    rows: List[RiskMonthly] = (
         db.query(RiskMonthly)
-        .filter(RiskMonthly.month == month)
         .filter(RiskMonthly.year == year)
+        .filter(RiskMonthly.month == month)
         .all()
     )
-    data:List[dict] = [
+
+    if not as_df:
+        return rows
+
+    # Explicit DataFrame conversion (only when requested)
+    db.close()
+    return pd.DataFrame([
         {
             "ticker": r.ticker,
             "month": r.month,
             "year": r.year,
-            "risk_score": r.risk_score,
             "rank": r.rank,
 
             "monthly_return": r.monthly_return,
@@ -191,13 +204,9 @@ def fetch_monthly_risk(db: Session,month:str,year:int):
             "month_cos": r.month_cos,
         }
         for r in rows
-    ]
+    ])
 
-    df = pd.DataFrame(data)
-    return df
-
-
-def fetch_risk(db: Session, month_str: str):
+def fetch_risk( month_str: str,db: Session ):
 
     start_date = datetime.strptime(month_str + "-01", "%Y-%m-%d")
     if start_date.month == 12:
@@ -215,7 +224,9 @@ def fetch_risk(db: Session, month_str: str):
     for d in data:
         d.pop('_sa_instance_state', None)
     df = pd.DataFrame(data)
+    db.close()
     return df
+
 
 def calculate_monhtly_risk(df: pd.DataFrame):
 
@@ -287,6 +298,7 @@ def calculate_monhtly_risk(df: pd.DataFrame):
 
     return pd.DataFrame(results)
 
+
 def calculate_monthly_rank(df: pd.DataFrame):
 
     for col in df.columns:
@@ -307,6 +319,7 @@ def calculate_monthly_rank(df: pd.DataFrame):
         g["dd_p"] = 1 - g["max_drawdown_monthly"].rank(pct=True)    # <-- Fixed
 
         # final combined score (all columns)
+       # calculate percentile class and scale to be called here
         g["safety_score"] = (
                 0.15 * g["return_p"] +
                 0.20 * g["sharpe_p"] +
@@ -323,4 +336,61 @@ def calculate_monthly_rank(df: pd.DataFrame):
         return g
 
     return df.groupby("month").apply(normalize_month).reset_index(drop=True)
+    # note this above calculates sccore so here we call our function of the class defined ScalingScorere class and then we get the score
 
+def calculate_monthly_risk_demo(df: pd.DataFrame):
+
+    df["date"] = pd.to_datetime(df["date"])
+
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month.astype(str)  # <-- CANONICAL
+
+    # cyclic encoding
+    df["month_sin"] = np.sin(2 * np.pi * df["month"].astype(int) / 12)
+    df["month_cos"] = np.cos(2 * np.pi * df["month"].astype(int) / 12)
+
+    results = []
+
+    for (ticker, year, month), group in df.groupby(
+            ["ticker", "year", "month"]
+    ):
+
+        daily_returns = group["return_val"].values
+
+        monthly_return = np.prod(1 + daily_returns) - 1
+        monthly_vol = np.std(daily_returns)
+
+        negative = daily_returns[daily_returns < 0]
+        downside_vol = np.std(negative) if len(negative) else 0
+
+        var_95 = np.percentile(daily_returns, 5)
+        tail = daily_returns[daily_returns < var_95]
+        cvar_95 = np.mean(tail) if len(tail) else var_95
+
+        cum = np.cumprod(1 + daily_returns)
+        peak = np.maximum.accumulate(cum)
+        max_dd = np.min((cum - peak) / peak)
+
+        sharpe = (
+            np.mean(daily_returns) / np.std(daily_returns)
+            if np.std(daily_returns) > 0 else 0
+        )
+
+        results.append({
+            "ticker": ticker,
+            "month": month,                      # ✅ "12"
+            "year": year,                        # ✅ 2022
+            "date": group["date"].min(),         # ✅ 2022-12-01
+            "month_sin": np.sin(2 * np.pi * int(month) / 12),
+            "month_cos": np.cos(2 * np.pi * int(month) / 12),
+
+            "monthly_return": monthly_return,
+            "monthly_volatility": monthly_vol,
+            "downside_vol_monthly": downside_vol,
+            "var_95_monthly": var_95,
+            "cvar_95_monthly": cvar_95,
+            "max_drawdown_monthly": max_dd,
+            "sharpe_monthly": sharpe,
+        })
+
+    return pd.DataFrame(results)

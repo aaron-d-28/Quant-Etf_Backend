@@ -13,11 +13,10 @@ def get_db():
     finally:
         db.close()
 
-@router.post("/", response_model=OHLCVResponse)
-def create_ohlcv(payload: OHLCVCreate, db: Session = Depends(get_db)):
-    record = OHLCV(**payload.dict())
-    db.add(record)
-    db.commit()
-    db.refresh(record)
-    return record
+@router.post("/")
+def create_ohlcv( ):
+
+    return {
+        "message": "hello testing ohlcv",
+    }
 
